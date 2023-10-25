@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"io"
 
 	"github.com/jbirddog/marketday"
 )
@@ -18,10 +17,7 @@ type Parser interface {
 	Parse([]time.Time) ([][]*marketday.EODData, error)
 }
 
-type HeaderParser func(string) error
-type RowParser func(string) (*marketday.EODData, error)
-
-func parseFile(path string, headerParser HeaderParser, rowParser RowParser) ([]*marketday.EODData, error) {
+func loadFile(path string) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -29,31 +25,17 @@ func parseFile(path string, headerParser HeaderParser, rowParser RowParser) ([]*
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	data := make([]*marketday.EODData, 0, 2048)
-
-	if headerParser != nil && scanner.Scan() {
-		err := headerParser(scanner.Text())
-		if err != nil {
-			return nil, err
-		}
-	}
+	lines := make([]string, 0, 4096)
 
 	for scanner.Scan() {
-		result, err := rowParser(scanner.Text())
-		if err != nil {
-			return nil, err
-		}
-
-		if result != nil {
-			data = append(data, result)
-		}
+		lines = append(lines, scanner.Text())
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 
-	return data, nil
+	return lines, nil
 }
 
 type EODExchStdCSVParser struct {
@@ -65,7 +47,12 @@ func (p *EODExchStdCSVParser) Parse(dates []time.Time) ([][]*marketday.EODData, 
 	eodData := make([][]*marketday.EODData, len(dates))
 
 	for i, date := range dates {
-		data, err := p.parseFile(date)
+		rawData, err := p.loadFile(p.DataDir, p.Exchange, date)
+		if err != nil {
+			return nil, err
+		}
+
+		data, err := p.parseFileContents(rawData)
 		if err != nil {
 			return nil, err
 		}
@@ -76,22 +63,39 @@ func (p *EODExchStdCSVParser) Parse(dates []time.Time) ([][]*marketday.EODData, 
 	return eodData, nil
 }
 
-func (p *EODExchStdCSVParser) filePath(date time.Time) string {
-	fileName := fmt.Sprintf("%s_%d%02d%02d.csv", p.Exchange, date.Year(), date.Month(), date.Day())
-	return path.Join(p.DataDir, fileName)
+func (p *EODExchStdCSVParser) filePath(dir string, exchange string, date time.Time) string {
+	fileName := fmt.Sprintf("%s_%d%02d%02d.csv", exchange, date.Year(), date.Month(), date.Day())
+	return path.Join(dir, fileName)
 }
 
-func (p *EODExchStdCSVParser) parseFile(date time.Time) ([]*marketday.EODData, error) {
-	path := p.filePath(dir, exchange, date)
-	return parseFile(path, nil, p.parseRow)
+func (p *EODExchStdCSVParser) loadFile(dir string, exchange string, date time.Time) ([]string, error) {
+	return loadFile(p.filePath(dir, exchange, date))
 }
 
-func (p *EODExchStdCSVParser) parseHeader(row string) error {
-	if row != "Symbol,Date,Open,High,Low,Close,Volume" {
-		return errors.New("Expected header as first line")
+func (p *EODExchStdCSVParser) parseFileContents(rawData []string) ([]*marketday.EODData, error) {
+	if len(rawData) == 0 || rawData[0] != "Symbol,Date,Open,High,Low,Close,Volume" {
+		return nil, errors.New("Expected header as first line")
 	}
 
-	return nil
+	rawData = rawData[1:]
+
+	if len(rawData) == 0 {
+		return nil, errors.New("Expected records to parse")
+	}
+
+	data := make([]*marketday.EODData, len(rawData))
+
+	for i, raw := range rawData {
+		eodData, err := p.parseRow(raw)
+
+		if err != nil {
+			return nil, err
+		}
+
+		data[i] = eodData
+	}
+
+	return data, nil
 }
 
 func (p *EODExchStdCSVParser) parseRow(row string) (*marketday.EODData, error) {

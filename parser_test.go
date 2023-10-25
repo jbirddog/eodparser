@@ -7,9 +7,9 @@ import (
 )
 
 func TestEODExchStdCSVFilePath(t *testing.T) {
-	parser := &EODExchStdCSVParser{Exchange: "NASDAQ"}
+	parser := &EODExchStdCSVParser{}
 
-	actual := parser.filePath("/data", marketday.Day(2023, 7, 4))
+	actual := parser.filePath("/data", "NASDAQ", marketday.Day(2023, 7, 4))
 	expected := "/data/NASDAQ_20230704.csv"
 
 	if actual != expected {
@@ -174,7 +174,7 @@ func TestParseMinimalEODExchangeStdCSVFile(t *testing.T) {
 		for j, a := range actual {
 			expected := c.expected[j]
 
-			if !sameData(a, expected) {
+			if !a.Equal(expected) {
 				t.Fatalf("[%d:%d] Expected %v, got %v", i, j, expected, a)
 			}
 		}
